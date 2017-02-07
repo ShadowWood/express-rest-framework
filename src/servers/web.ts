@@ -1,11 +1,18 @@
-import * as bodyParser from "body-parser";
-import * as cookieParser from "cookie-parser";
-import * as express from "express";
-import * as logger from "morgan";
-import * as path from "path";
-import { IndexRoute } from "./routes/index";
-import errorHandler = require("errorhandler");
-import methodOverride = require("method-override");
+import * as bodyParser from 'body-parser';
+import * as cookieParser from 'cookie-parser';
+import * as express from 'express';
+import * as path from 'path';
+import * as responseTime from 'response-time';
+import * as expressSession from 'express-session';
+import * as compression from 'compression';
+import * as config from 'config';
+import * as http from 'http';
+import { IndexRoute } from '../routes/index';
+import * as logger from '../tools/logger';
+import errorHandler = require('errorhandler');
+import methodOverride = require('method-override');
+
+const SessStore = require('connect-redis')(expressSession);
 
 /**
  * The server.
@@ -65,15 +72,17 @@ export class Server {
    * @method config
    */
   public config() {
+    this.app.use(compression());
+    this.app.use(responseTime());
     //add static paths
-    this.app.use(express.static(path.join(__dirname, "public")));
+    this.app.use(express.static(config['static'].dir, {maxAge: config['static'].maxAge}));
 
     //configure pug
-    this.app.set("views", path.join(__dirname, "views"));
-    this.app.set("view engine", "pug");
+    this.app.set('views', path.join(__dirname, 'views'));
+    this.app.set('view engine', 'pug');
 
     //use logger middlware
-    this.app.use(logger("dev"));
+    this.app.use(logger['log4js'].connectLogger(logger, config['log']));
 
     //use json form parser middlware
     this.app.use(bodyParser.json());
@@ -84,7 +93,17 @@ export class Server {
     }));
 
     //use cookie parker middleware middlware
-    this.app.use(cookieParser("SECRET_GOES_HERE"));
+    this.app.use(cookieParser('SECRET_GOES_HERE'));
+
+    this.app.use(expressSession({
+      proxy: true,
+      resave: true,
+      saveUninitialized: false,
+      name: 'express-rest-framework',
+      secret: 'secret',
+      store: new SessStore(config['redis'].session),
+      cookie: {maxAge: 1000 * 60 * 60 * 24 * 7}
+    }));
 
     //use override middlware
     this.app.use(methodOverride());
@@ -114,5 +133,15 @@ export class Server {
 
     //use router middleware
     this.app.use(router);
+  }
+
+  /**
+   * server start
+   */
+  public start() {
+    let server = http.createServer(this.app);
+    server.listen(config['web'].port, function() {
+      logger.info(config['web'].name, config['web'].url, 'start up!');
+    })
   }
 }
